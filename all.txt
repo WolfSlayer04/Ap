@@ -1,0 +1,434 @@
+app.js:
+const express = require('express');
+const swaggerJsDoc = require('swagger-jsdoc');
+const swaggerUi = require('swagger-ui-express');
+
+const app = express();
+const PORT = process.env.PORT || 3000; // Puerto por defecto
+
+// Configuración de Swagger
+const swaggerOptions = {
+    swaggerDefinition: {
+        openapi: '3.0.0', // o '2.0' si usas Swagger 2.0
+        info: {
+            title: 'Mi API',
+            version: '1.0.0',
+            description: 'Documentación de la API',
+        },
+        servers: [
+            {
+                url: `http://localhost:${PORT}`, // Cambia esto si es necesario
+            },
+        ],
+    },
+    apis: ['./routes/*.js'], // Ruta a los archivos de rutas
+};
+
+const swaggerDocs = swaggerJsDoc(swaggerOptions);
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
+
+// Aquí van tus rutas
+app.use('/users', require('./routes/users')); // Asegúrate de que esta ruta exista
+
+// Iniciar el servidor
+app.listen(PORT, () => {
+    console.log(`Servidor corriendo en http://localhost:${PORT}/api-docs`);
+});
+routes\users.js:
+const express = require('express');
+const User = require('../models/User');
+const { authenticateToken } = require('../middleware/auth'); // Importar el middleware
+
+const router = express.Router();
+
+// Registro de usuario
+router.post('/register', async (req, res) => {
+  try {
+    const { name, user_name, password, foto, verificado } = req.body;
+    if (!name || !user_name || !password) {
+      return res.status(400).json({ message: 'Faltan campos requeridos' });
+    }
+
+    const newUser = new User({ name, user_name, password, foto, verificado });
+    await newUser.save();
+    const token = generateToken(newUser._id);
+    res.status(201).json({ user: newUser, token });
+  } catch (error) {
+    res.status(400).json({ message: 'Error al registrar el usuario', error: error.message });
+  }
+});
+
+// Obtiene datos del usuario autenticado
+router.get('/', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'Usuario no encontrado' });
+    }
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: 'Error al obtener el usuario' });
+  }
+});
+
+module.exports = router;
+routes\serviceRequests.js:
+const express = require('express');
+const ServiceRequest = require('../models/ServiceRequest');
+const { authenticateToken } = require('../middleware/auth');
+
+const router = express.Router();
+
+// Obtener todas las solicitudes de servicio asignadas al enfermero autenticado
+router.get('/', authenticateToken, async (req, res) => {
+  try {
+    const requests = await ServiceRequest.find({ nurse_id: req.userId });
+    res.json(requests);
+  } catch (error) {
+    res.status(500).json({ message: 'Error al obtener las solicitudes', error: error.message });
+  }
+});
+
+// Crear una nueva solicitud de servicio
+router.post('/', authenticateToken, async (req, res) => {
+  const { nurse_id, patient_id, detalles, fecha, tarifa } = req.body;
+  try {
+    const newRequest = new ServiceRequest({
+      user_id: req.userId,
+      nurse_id,
+      patient_id,
+      detalles,
+      fecha,
+      tarifa
+    });
+    await newRequest.save();
+    res.status(201).json(newRequest);
+  } catch (error) {
+    res.status(400).json({ message: 'Error al crear la solicitud de servicio', error: error.message });
+  }
+});
+
+// Actualizar el estado de una solicitud de servicio
+router.put('/:id', authenticateToken, async (req, res) => {
+  try {
+    const { estado } = req.body;
+    const request = await ServiceRequest.findOneAndUpdate(
+      { _id: req.params.id, nurse_id: req.userId },
+      { estado },
+      { new: true }
+    );
+
+    if (!request) {
+      return res.status(404).json({ message: 'Solicitud de servicio no encontrada' });
+    }
+    res.json(request);
+  } catch (error) {
+    res.status(400).json({ message: 'Error al actualizar la solicitud', error: error.message });
+  }
+});
+
+module.exports = router;
+routes\patients.js:
+const express = require('express');
+const Patient = require('../models/Patient'); // Ajusta la ruta según la ubicación de tu modelo
+const router = express.Router();
+const authenticateToken = require('../middleware/auth');
+
+/**
+ * @swagger
+ * /patients:
+ *   get:
+ *     summary: Obtiene todos los pacientes
+ *     responses:
+ *       200:
+ *         description: Lista de pacientes
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ */
+router.get('/', authenticateToken, async (req, res) => {
+  try {
+    const patients = await Patient.find({ usuario_id: req.userId });
+    res.json(patients);
+  } catch (error) {
+    res.status(500).json({ message: 'Error al obtener los pacientes' });
+  }
+});
+
+// Otros endpoints para pacientes (POST, PUT, DELETE, etc.)
+
+module.exports = router;
+
+routes\nurses.js:
+const express = require('express');
+const Nurse = require('../models/Nurse');
+const { authenticateToken } = require('../middleware/auth');
+
+const router = express.Router();
+
+// Obtener enfermeros por especialidad
+router.get('/', authenticateToken, async (req, res) => {
+    const { specialty } = req.query;
+
+    try {
+        const nurses = await Nurse.find({ specialty });
+        if (nurses.length === 0) {
+            return res.status(404).json({ message: 'No se encontraron enfermeros' });
+        }
+        res.status(200).json(nurses);
+    } catch (error) {
+        res.status(500).json({ message: 'Error en el servidor' });
+    }
+});
+
+// Obtener todos los enfermeros
+router.get('/all', authenticateToken, async (req, res) => {
+    try {
+        const nurses = await Nurse.find();
+        res.status(200).json(nurses);
+    } catch (error) {
+        res.status(500).json({ message: 'Error en el servidor' });
+    }
+});
+
+// Registro de enfermero
+router.post('/register', async (req, res) => {
+  try {
+    const { name, user_name, password, fecha_nacimiento, genero, movilidad, descripcion, especialidad, ubicacion, tarifa, disponibilidad, certificados } = req.body;
+    if (!name || !user_name || !password || !especialidad || !ubicacion || tarifa === undefined) {
+      return res.status(400).json({ message: 'Faltan campos requeridos' });
+    }
+
+    const newNurse = new Nurse({
+      name,
+      user_name,
+      password,
+      fecha_nacimiento,
+      genero,
+      movilidad,
+      descripcion,
+      especialidad,
+      ubicacion,
+      tarifa,
+      disponibilidad,
+      certificados
+    });
+
+    await newNurse.save();
+    const token = generateToken(newNurse._id);
+    res.status(201).json({ message: 'Enfermero registrado exitosamente', nurse: newNurse, token: `Bearer ${token}` });
+  } catch (error) {
+    res.status(400).json({ message: 'Error en el registro del enfermero', error: error.message });
+  }
+});
+
+// Obtener perfil del enfermero autenticado
+router.get('/me', authenticateToken, async (req, res) => {
+  try {
+    const nurse = await Nurse.findById(req.userId);
+    if (!nurse) {
+      return res.status(404).json({ message: 'Enfermero no encontrado' });
+    }
+    res.json(nurse);
+  } catch (error) {
+    res.status(500).json({ message: 'Error al obtener el perfil', error: error.message });
+  }
+});
+
+// Actualizar perfil del enfermero autenticado
+router.put('/me', authenticateToken, async (req, res) => {
+  try {
+    const updatedNurse = await Nurse.findByIdAndUpdate(req.userId, req.body, { new: true });
+    if (!updatedNurse) {
+      return res.status(404).json({ message: 'Enfermero no encontrado' });
+    }
+    res.json(updatedNurse);
+  } catch (error) {
+    res.status(400).json({ message: 'Error al actualizar el perfil', error: error.message });
+  }
+});
+
+module.exports = router;
+routes\messages.js:
+const express = require('express');
+const Message = require('../models/Message');
+const { authenticateToken } = require('../middleware/auth');
+
+const router = express.Router();
+
+// Enviar un mensaje a un usuario
+router.post('/', authenticateToken, async (req, res) => {
+  const { to, content } = req.body;
+  try {
+    const message = new Message({ from: req.userId, to, content });
+    await message.save();
+    res.status(201).json(message);
+  } catch (error) {
+    res.status(400).json({ message: 'Error al enviar el mensaje', error: error.message });
+  }
+});
+
+module.exports = router;
+routes\index.js:
+const express = require('express');
+const router = express.Router();
+const usersRoutes = require('./users'); // Asegúrate de que esto esté correcto
+const nursesRoutes = require('./nurses'); // Si lo tienes
+const serviceRequestRoutes = require('./serviceRequests'); // Importa el archivo correcto
+
+// Define las rutas
+router.use('/users', usersRoutes);
+router.use('/nurses', nursesRoutes);
+router.use('/service-requests', serviceRequestRoutes); // Asegúrate de que esto sea correcto
+
+module.exports = router;
+
+db.js:
+const mongoose = require('mongoose');
+
+const connectDB = async () => {
+  try {
+    await mongoose.connect('mongodb+srv://manueljosecarillo:CswGJzsC9XjZX6AC@cluster0.d2oz0.mongodb.net/sonwi?retryWrites=true&w=majority&appName=Cluster0', {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log('MongoDB conectado a la base de datos sonwi');
+  } catch (error) {
+    console.error('Error al conectar a MongoDB:', error);
+    process.exit(1);
+  }
+};
+
+module.exports = connectDB;
+
+models\Message.js:
+// models/Message.js
+const mongoose = require('mongoose');
+
+const MessageSchema = new mongoose.Schema({
+  from: String,
+  to: String,
+  content: String,
+  timestamp: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('Message', MessageSchema);
+models\Nurse.js:
+// models/Nurse.js
+const mongoose = require('mongoose');
+
+const NurseSchema = new mongoose.Schema({
+  name: String,
+  fecha_nacimiento: String,
+  genero: String,
+  movilidad: String,
+  descripcion: String,
+  usuario_id: String,
+  especialidad: String,
+  ubicacion: String,
+  tarifa: Number,
+  disponibilidad: [String],
+  certificados: [String],
+  user_name: { type: String, unique: true, required: true }, // Agregar user_name
+  password: { type: String, required: true }                 // Agregar password
+});
+module.exports = mongoose.model('Nurse', NurseSchema, 'Colección Enfermeros');
+
+models\Patient.js:
+const mongoose = require('mongoose');
+
+const patientSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  fecha_nacimiento: { type: String, required: true },
+  genero: { type: String, required: true },
+  movilidad: { type: String, required: true },
+  descripcion: { type: String, required: true },
+  usuario_id: { type: String, required: true } // Verifica si está configurado como obligatorio
+});
+
+module.exports = mongoose.model('Patient', patientSchema, 'Colección Pacientes');
+
+const Patient = mongoose.model('Patient', patientSchema, 'Colección Pacientes');
+
+module.exports = Patient;
+
+models\Review.js:
+// models/Review.js
+const mongoose = require('mongoose');
+
+const ReviewSchema = new mongoose.Schema({
+  user_id: String,
+  nurse_id: String,
+  rating: Number,
+  comentario: String,
+  fecha: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('Review', ReviewSchema);
+models\Review.js:
+// models/Review.js
+const mongoose = require('mongoose');
+
+const ReviewSchema = new mongoose.Schema({
+  user_id: String,
+  nurse_id: String,
+  rating: Number,
+  comentario: String,
+  fecha: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('Review', ReviewSchema);
+models\ServiceRequest.js:
+// models/ServiceRequest.js
+const mongoose = require('mongoose');
+
+const ServiceRequestSchema = new mongoose.Schema({
+  user_id: String,
+  nurse_id: String,
+  patient_id: String,
+  estado: { type: String, default: 'pendiente' },
+  detalles: String, // Detalles adicionales sobre el servicio
+  fecha: Date,
+  tarifa: Number,
+  pago_realizado: { type: Boolean, default: false }
+});
+
+module.exports = mongoose.model('ServiceRequest', ServiceRequestSchema);
+models\User.js:
+// ./models/User.js
+const mongoose = require('mongoose');
+
+const UserSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  user_name: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  foto: { type: String },
+  verificado: { type: String, default: 'No' },
+});
+
+module.exports = mongoose.model('User', UserSchema, 'Colección Usuarios2');
+middleware\auth.js:
+const jwt = require('jsonwebtoken');
+
+// Generar un token
+function generateToken(userId) {
+    return jwt.sign({ userId }, 'tu_secreto_jwt', { expiresIn: '1h' });
+}
+
+// Middleware para autenticar el token
+function authenticateToken(req, res, next) {
+    const token = req.headers['authorization'] && req.headers['authorization'].split(' ')[1]; // Extraer el token del encabezado Authorization
+    if (!token) return res.sendStatus(401); // No autorizado
+
+    jwt.verify(token, 'tu_secreto_jwt', (err, user) => {
+        if (err) return res.sendStatus(403); // Prohibido
+        req.userId = user.userId; // Almacenar el ID del usuario en la solicitud
+        next(); // Continuar con la siguiente función de middleware
+    });
+}
+
+module.exports = { generateToken, authenticateToken };
+
