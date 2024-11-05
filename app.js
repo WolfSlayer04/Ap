@@ -24,7 +24,7 @@ const swaggerOptions = {
         },
         servers: [
             {
-                url: `http://localhost:${PORT}`,
+                url: `https://ap-zbjh.onrender.com`,
             },
         ],
         components: {
